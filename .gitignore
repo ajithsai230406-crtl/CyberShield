@@ -1,77 +1,35 @@
-# Flutter
-.dart_tool/
-.packages
+# Gradle files
+.gradle/
 build/
-.flutter-plugins
-.flutter-plugins-dependencies
+.kotlin/
+
+# Local configuration file (sdk path, etc)
+local.properties
+
+# Log/OS Files
+*.log
+
+# Android Studio generated files and folders
+captures/
+.externalNativeBuild/
+.cxx/
+*.aab
+*.apk
+output-metadata.json
+
+# IntelliJ
 *.iml
+.idea/
+misc.xml
+deploymentTargetDropDown.xml
+render.experimental.xml
 
-# Dart
-.pub/
-pubspec.lock
-
-# Android
-android/.gradle/
-android/local.properties
-android/app/debug/
-android/app/profile/
-android/app/release/
-**/android/key.properties
+# Keystore files
 *.jks
 *.keystore
 
-# iOS
-ios/Pods/
-ios/.symlinks/
-ios/Flutter/Flutter.framework
-ios/Flutter/Flutter.podspec
+# Google Services (e.g. APIs or Firebase)
+google-services.json
 
-# macOS
-macos/Pods/
-macos/Flutter/ephemeral/
-
-# Windows
-windows/flutter/ephemeral/
-
-# Linux
-linux/flutter/ephemeral/
-
-# Web
-web/.dart_tool/
-
-# IDE
-.idea/
-.vscode/
-*.swp
-*.swo
-*~
-.DS_Store
-
-# Python Backend
-backend/__pycache__/
-backend/*.pyc
-backend/.pytest_cache/
-backend/tests/__pycache__/
-backend/tests/.pytest_cache/
-*.egg-info/
-dist/
-*.egg
-
-# Virtual Environments
-.env
-.venv
-env/
-venv/
-ENV/
-
-# Coverage
-coverage/
-htmlcov/
-.coverage
-
-# Misc
-*.log
-*.tmp
-.firebase/
-firebase_export/
-
+# Android Profiling
+*.hprof
