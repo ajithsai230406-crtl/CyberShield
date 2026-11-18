@@ -79,6 +79,20 @@ class AppRouter {
       case urlScanner:
         return _buildRoute(const UrlScannerScreen());
       case smsScanner:
+        if (routeSettings.arguments is Map) {
+          final args = Map<String, dynamic>.from(routeSettings.arguments as Map);
+          return _buildRoute(SmsScannerScreen(
+            initialMessage: args['content']?.toString() ?? args['message']?.toString(),
+            initialSender: args['sender']?.toString(),
+            initialSourceApp: args['sourceApp']?.toString(),
+            autoScan: args['autoScan'] == true,
+          ));
+        } else if (routeSettings.arguments is String) {
+          return _buildRoute(SmsScannerScreen(
+            initialMessage: routeSettings.arguments as String,
+            autoScan: true,
+          ));
+        }
         return _buildRoute(const SmsScannerScreen());
       case qrScanner:
         return _buildRoute(const QrScannerScreen());
@@ -89,6 +103,15 @@ class AppRouter {
       case permissionAnalyzer:
         return _buildRoute(const PermissionAnalyzerScreen());
       case emailScanner:
+        if (routeSettings.arguments is Map) {
+          final args = Map<String, dynamic>.from(routeSettings.arguments as Map);
+          return _buildRoute(EmailScannerScreen(
+            initialSender: args['sender']?.toString(),
+            initialSubject: args['subject']?.toString() ?? args['title']?.toString(),
+            initialBody: args['content']?.toString() ?? args['body']?.toString(),
+            autoScan: args['autoScan'] == true,
+          ));
+        }
         return _buildRoute(const EmailScannerScreen());
       case fileScanner:
         return _buildRoute(const FileScannerScreen());

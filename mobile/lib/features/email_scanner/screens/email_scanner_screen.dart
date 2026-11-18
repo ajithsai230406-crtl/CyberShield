@@ -31,7 +31,18 @@ class _EmailPreset {
 }
 
 class EmailScannerScreen extends StatefulWidget {
-  const EmailScannerScreen({super.key});
+  final String? initialSender;
+  final String? initialSubject;
+  final String? initialBody;
+  final bool autoScan;
+
+  const EmailScannerScreen({
+    super.key,
+    this.initialSender,
+    this.initialSubject,
+    this.initialBody,
+    this.autoScan = false,
+  });
 
   @override
   State<EmailScannerScreen> createState() => _EmailScannerScreenState();
@@ -90,6 +101,21 @@ class _EmailScannerScreenState extends State<EmailScannerScreen> {
   void initState() {
     super.initState();
     _gmail.addListener(_onGmailServiceUpdated);
+
+    if (widget.initialSender != null && widget.initialSender!.trim().isNotEmpty) {
+      _senderController.text = widget.initialSender!.trim();
+    }
+    if (widget.initialSubject != null && widget.initialSubject!.trim().isNotEmpty) {
+      _subjectController.text = widget.initialSubject!.trim();
+    }
+    if (widget.initialBody != null && widget.initialBody!.trim().isNotEmpty) {
+      _bodyController.text = widget.initialBody!.trim();
+      if (widget.autoScan) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _analyzeEmail();
+        });
+      }
+    }
   }
 
   void _onGmailServiceUpdated() {

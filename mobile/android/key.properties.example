@@ -1,0 +1,9 @@
+# Production Keystore Configuration Template
+# Copy this file to 'key.properties' in the same directory (mobile/android/) and fill in your values.
+# IMPORTANT: Never commit key.properties or .keystore / .jks files to version control!
+#
+# storePassword=<your-keystore-password>
+# keyPassword=<your-key-password>
+# keyAlias=<your-key-alias>
+# storeFile=upload-keystore.jks
+

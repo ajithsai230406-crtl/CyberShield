@@ -1,16 +1,67 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // CyberShield scan history collection:
-    // Only authenticated users can access their own scan_history subcollection.
-    match /users/{userId}/scan_history/{scanId} {
-      allow read, create, update, delete: if request.auth != null && request.auth.uid == userId;
+    // CyberShield User Isolation Security Rules
+    // Each authenticated user can only access, create, update, and delete their own private records.
+    match /users/{userId} {
+      allow read, write, delete: if request.auth != null && request.auth.uid == userId;
+
+      // Scan history subcollection
+      match /scan_history/{scanId} {
+        allow read, create, update, delete: if request.auth != null && request.auth.uid == userId;
+      }
+
+      // Security alerts subcollection
+      match /alerts/{alertId} {
+        allow read, create, update, delete: if request.auth != null && request.auth.uid == userId;
+      }
+
+      // User preferences (theme, accents, notification toggles)
+      match /preferences/{docId} {
+        allow read, create, update, delete: if request.auth != null && request.auth.uid == userId;
+      }
+
+      // User community reports subcollection
+      match /community_reports/{reportId} {
+        allow read, create, update, delete: if request.auth != null && request.auth.uid == userId;
+      }
+
+      // Assistant chat history subcollection
+      match /assistant_chats/{messageId} {
+        allow read, create, update, delete: if request.auth != null && request.auth.uid == userId;
+      }
+
+      // Communication security history subcollection (user-isolated SMS, notifications, calls, email)
+      match /communication_history/{recordId} {
+        allow read, create, update, delete: if request.auth != null && request.auth.uid == userId;
+      }
+
+      // Communication monitoring consent, retention & privacy settings
+      match /communication_settings/{docId} {
+        allow read, create, update, delete: if request.auth != null && request.auth.uid == userId;
+      }
+
+      // Unified 18-module Security Events subcollection (Centralized Smart Alert Engine)
+      match /security_events/{eventId} {
+        allow read, create, update, delete: if request.auth != null && request.auth.uid == userId;
+      }
+
+      // Smart Notification Preferences & retention settings
+      match /smart_notification_prefs/{docId} {
+        allow read, create, update, delete: if request.auth != null && request.auth.uid == userId;
+      }
     }
 
-    // Default deny for all other documents
+    // Public community threat intelligence feed (read-only for authenticated, create validated)
+    match /community_threat_feed/{reportId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null;
+      allow update, delete: if false; // immutable crowd reports
+    }
+
+    // Default deny for all other collections
     match /{document=**} {
       allow read, write: if false;
     }
   }
 }
-

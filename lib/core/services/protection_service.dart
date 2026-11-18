@@ -11,6 +11,8 @@ import 'package:cybershield/core/services/api_service.dart';
 import 'package:cybershield/core/services/alert_service.dart';
 import 'package:cybershield/core/services/communication_service.dart';
 import 'package:cybershield/core/services/smart_alert_engine.dart';
+import 'package:cybershield/core/navigation/app_router.dart';
+import 'package:cybershield/app.dart';
 
 class ProtectionService {
   static final ProtectionService instance = ProtectionService._internal();
@@ -107,6 +109,109 @@ class ProtectionService {
     await syncNativeBackendConfig();
     await loadNativeScreenedCallHistory();
     startEventListener();
+    await checkInitialNotificationLaunch();
+  }
+
+  /// Check if the application was launched from a CyberShield notification tap
+  Future<void> checkInitialNotificationLaunch() async {
+    try {
+      final payload = await _methodChannel.invokeMethod<Map<dynamic, dynamic>>('getInitialNotificationPayload');
+      if (payload != null && payload.isNotEmpty) {
+        final map = Map<String, dynamic>.from(payload);
+        await _methodChannel.invokeMethod('clearInitialNotificationPayload');
+        handleThreatNavigation(map);
+      }
+    } on MissingPluginException {
+      // Non-Android
+    } catch (_) {}
+  }
+
+  /// Direct the user to the appropriate detection screen based on notification event
+  void handleThreatNavigation(Map<String, dynamic> data) {
+    final screen = data['screen']?.toString();
+    final type = data['type']?.toString();
+    final navigator = CyberShieldApp.navigatorKey.currentState;
+    if (navigator == null) return;
+
+    if (screen == 'sms_scanner' || type == 'sms') {
+      navigator.pushNamed(
+        AppRouter.smsScanner,
+        arguments: {
+          'content': data['content'] ?? data['text'] ?? '',
+          'sender': data['sender'] ?? data['title'] ?? '',
+          'sourceApp': data['sourceApp'] ?? 'SMS',
+          'autoScan': true,
+        },
+      );
+    } else if (screen == 'email_scanner' || type == 'email') {
+      navigator.pushNamed(
+        AppRouter.emailScanner,
+        arguments: {
+          'sender': data['sender'] ?? '',
+          'title': data['title'] ?? '',
+          'content': data['content'] ?? data['text'] ?? '',
+          'autoScan': true,
+        },
+      );
+    } else if (screen == 'call_screening' || type == 'call') {
+      navigator.pushNamed(
+        AppRouter.communications,
+        arguments: 2, // Call History tab
+      );
+    } else if (screen == 'apk_analysis' || type == 'installed_apk' || type == 'apk') {
+      navigator.pushNamed(
+        AppRouter.permissionAnalyzer,
+      );
+    }
+  }
+
+  /// Process newly installed package broadcast event
+  Future<void> handleInstalledApkEvent(Map<String, dynamic> data) async {
+    final pkg = data['packageName']?.toString() ?? 'unknown.package';
+    final appName = data['appName']?.toString() ?? pkg;
+    final riskScore = data['riskScore'] is int ? data['riskScore'] as int : 0;
+    final safetyScore = data['safetyScore'] is int ? data['safetyScore'] as int : (100 - riskScore);
+    final classification = data['classification']?.toString() ?? 'Safe';
+    final explanation = data['explanation']?.toString() ?? 'Application scanned upon installation.';
+    final actions = (data['recommendedActions'] as List?)?.map((e) => e.toString()).toList() ?? <String>[];
+
+    recordEventLog(
+      type: 'apk',
+      source: appName,
+      title: 'Newly Installed APK: $appName',
+      rawContent: '$appName ($pkg) - Risk Score: $riskScore/100, Safety: $safetyScore/100. $explanation',
+      riskScore: riskScore,
+      classification: classification,
+      isSimulated: false,
+      recommendedAction: actions.isNotEmpty ? actions.first : null,
+    );
+
+    if (classification != 'Safe' || riskScore >= 20) {
+      await AlertService.instance.evaluateAndRecordScanAlert(
+        scanType: 'APK',
+        target: '$appName ($pkg)',
+        riskScore: riskScore,
+        classification: classification,
+        summary: explanation,
+        recommendedActions: actions.isNotEmpty
+            ? actions
+            : ['Review declared permissions.', 'Consider uninstalling if untrusted.'],
+      );
+
+      unawaited(
+        SmartAlertEngine.instance.submitEvent(
+          moduleName: 'apk_security_inspector',
+          eventCategory: 'app_installed',
+          source: 'package_manager',
+          targetIdentifier: pkg,
+          riskScore: riskScore,
+          classification: classification,
+          findings: [explanation],
+          explanation: 'Newly installed package $appName ($pkg) was audited. Identified risk score: $riskScore/100.',
+          recommendedActions: actions,
+        ),
+      );
+    }
   }
 
   /// Sync active API base URL and Firebase ID token to native SharedPreferences
@@ -723,7 +828,13 @@ class ProtectionService {
         (event) {
           if (event is Map) {
             final type = event['type']?.toString();
-            if (type == 'notification') {
+            if (type == 'notification_tap') {
+              final map = Map<String, dynamic>.from(event);
+              handleThreatNavigation(map);
+            } else if (type == 'installed_apk') {
+              final map = Map<String, dynamic>.from(event);
+              handleInstalledApkEvent(map);
+            } else if (type == 'notification') {
               final map = Map<String, dynamic>.from(event);
               analyzeNotificationEvent(map);
               final tsMs = map['timestamp'] is int

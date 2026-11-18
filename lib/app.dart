@@ -7,6 +7,7 @@ import 'package:cybershield/features/auth/screens/email_verification_screen.dart
 import 'package:cybershield/core/widgets/main_navigation_scaffold.dart';
 
 class CyberShieldApp extends StatefulWidget {
+  static final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
   final Widget? home;
 
   const CyberShieldApp({super.key, this.home});
@@ -28,6 +29,7 @@ class _CyberShieldAppState extends State<CyberShieldApp> {
       animation: ThemeController.instance,
       builder: (context, _) {
         return MaterialApp(
+          navigatorKey: CyberShieldApp.navigatorKey,
           title: 'CyberShield',
           debugShowCheckedModeBanner: false,
           themeMode: ThemeController.instance.themeMode,

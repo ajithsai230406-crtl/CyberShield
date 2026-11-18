@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "988802371138",
+    "project_id": "cybersheild-30cc7",
+    "storage_bucket": "cybersheild-30cc7.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:988802371138:android:b9b4078ec7dd3ddfb027db",
+        "android_client_info": {
+          "package_name": "com.example.mobile"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "988802371138-impo4qf6tjrurtelir6oh3jdu0tr9909.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.example.mobile",
+            "certificate_hash": "ac404fd52645ba2999a10bb4dd1f12ad7ccdd11c"
+          }
+        },
+        {
+          "client_id": "988802371138-1tef7itggsd63l54cf79ur5jrfkh3d8m.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAhB_h07Eh_bgmk1aXEa7SGPaDFB7jiGmc"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "988802371138-1tef7itggsd63l54cf79ur5jrfkh3d8m.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

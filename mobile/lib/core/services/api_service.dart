@@ -23,7 +23,7 @@ import 'package:cybershield/core/models/security_event_model.dart';
 
 class ApiService {
   static const String _prefKeyApiBaseUrl = 'cybershield_api_base_url';
-  static const String _prefKeyCloudMigrated = 'cybershield_cloud_migrated_v1';
+  static const String _prefKeyCloudMigrated = 'cybershield_cloud_migrated_v2';
 
   static String? _customBaseUrl;
   static bool _initialized = false;

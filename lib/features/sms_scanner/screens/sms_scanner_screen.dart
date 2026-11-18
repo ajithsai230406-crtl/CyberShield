@@ -13,7 +13,18 @@ import 'package:cybershield/core/models/sms_scan_result.dart';
 import 'package:cybershield/core/widgets/cybor_floating_widget.dart';
 
 class SmsScannerScreen extends StatefulWidget {
-  const SmsScannerScreen({super.key});
+  final String? initialMessage;
+  final String? initialSender;
+  final String? initialSourceApp;
+  final bool autoScan;
+
+  const SmsScannerScreen({
+    super.key,
+    this.initialMessage,
+    this.initialSender,
+    this.initialSourceApp,
+    this.autoScan = false,
+  });
 
   @override
   State<SmsScannerScreen> createState() => _SmsScannerScreenState();
@@ -47,6 +58,15 @@ class _SmsScannerScreenState extends State<SmsScannerScreen>
     _pulseAnimation = Tween<double>(begin: 0.85, end: 1.0).animate(
       CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
     );
+
+    if (widget.initialMessage != null && widget.initialMessage!.trim().isNotEmpty) {
+      _smsController.text = widget.initialMessage!.trim();
+      if (widget.autoScan) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _performScan();
+        });
+      }
+    }
   }
 
   @override
@@ -340,6 +360,29 @@ class _SmsScannerScreenState extends State<SmsScannerScreen>
               ),
             ],
           ),
+          if (widget.initialSender != null || widget.initialSourceApp != null) ...[
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: AppColors.primary.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: AppColors.primary.withValues(alpha: 0.3)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.shield_outlined, size: 14, color: AppColors.primary),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      'Detected from ${widget.initialSourceApp ?? "Notification"}${widget.initialSender != null ? " • Sender: ${widget.initialSender}" : ""}',
+                      style: const TextStyle(color: AppColors.primary, fontSize: 11, fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
           const SizedBox(height: 12),
           TextField(
             controller: _smsController,
