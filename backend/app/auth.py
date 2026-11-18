@@ -27,15 +27,25 @@ security_scheme = HTTPBearer(
 )
 
 _firebase_initialized = False
+_has_service_account_creds = False
+_cached_google_request: Optional[google_requests.Request] = None
+
+
+def _get_google_request() -> google_requests.Request:
+    """Reuse a single HTTP session so Google public x509 certs are cached in memory."""
+    global _cached_google_request
+    if _cached_google_request is None:
+        _cached_google_request = google_requests.Request()
+    return _cached_google_request
 
 
 def initialize_firebase_admin() -> None:
     """
     Initialize Firebase Admin SDK using service account credentials or project ID.
-    Reads FIREBASE_SERVICE_ACCOUNT_PATH or GOOGLE_APPLICATION_CREDENTIALS from env.
+    Reads FIREBASE_SERVICE_ACCOUNT_JSON, FIREBASE_SERVICE_ACCOUNT_PATH or GOOGLE_APPLICATION_CREDENTIALS from env.
     Falls back gracefully to default project configuration.
     """
-    global _firebase_initialized
+    global _firebase_initialized, _has_service_account_creds
     if _firebase_initialized or (hasattr(firebase_admin, "_apps") and firebase_admin._apps):
         _firebase_initialized = True
         return
@@ -55,6 +65,7 @@ def initialize_firebase_admin() -> None:
             cred = credentials.Certificate(cert_dict)
             firebase_admin.initialize_app(cred)
             _firebase_initialized = True
+            _has_service_account_creds = True
             logger.info("Firebase Admin initialized from FIREBASE_SERVICE_ACCOUNT_JSON.")
             return
         except Exception as e:
@@ -67,6 +78,7 @@ def initialize_firebase_admin() -> None:
             cred = credentials.Certificate(target_path)
             firebase_admin.initialize_app(cred)
             _firebase_initialized = True
+            _has_service_account_creds = True
             logger.info("Firebase Admin initialized with certificate from %s", target_path)
             return
         except Exception as e:
@@ -129,19 +141,22 @@ async def get_current_user(
         initialize_firebase_admin()
 
         def _verify_sync():
-            try:
-                return auth.verify_id_token(token)
-            except (auth.ExpiredIdTokenError, auth.InvalidIdTokenError, auth.RevokedIdTokenError):
-                raise
-            except Exception as inner_e:
-                # If Firebase Admin lacks local service account credentials,
-                # verify cryptographic RS256 signature against Google's public x509 certs
-                logger.debug("Admin SDK verification deferred; verifying via Google public certs: %s", inner_e)
-                project_id = os.getenv("FIREBASE_PROJECT_ID", "cybersheild-30cc7")
-                req = google_requests.Request()
-                return google_id_token.verify_firebase_token(
-                    token, req, audience=project_id
-                )
+            # Use Admin SDK only when explicit service account credentials are loaded (or in unit tests).
+            # On cloud hosts without GCP metadata server (Railway/Render), calling auth.verify_id_token()
+            # without a cert blocks ~12s per request timing out on 169.254.169.254 before falling back.
+            if _has_service_account_creds or os.getenv("PYTEST_CURRENT_TEST"):
+                try:
+                    return auth.verify_id_token(token)
+                except (auth.ExpiredIdTokenError, auth.InvalidIdTokenError, auth.RevokedIdTokenError):
+                    raise
+                except Exception as inner_e:
+                    logger.debug("Admin SDK verification deferred; verifying via Google public certs: %s", inner_e)
+
+            project_id = os.getenv("FIREBASE_PROJECT_ID", "cybersheild-30cc7")
+            req = _get_google_request()
+            return google_id_token.verify_firebase_token(
+                token, req, audience=project_id
+            )
 
         decoded_token = await asyncio.to_thread(_verify_sync)
 
