@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+*.egg-info/
+dist/
+venv/
+.venv/
+
+# Environment & Secrets
+.env
+.env.*
+!.env.example
+*serviceAccountKey*.json
+*firebase-adminsdk*.json
+*service_account*.json
+firebase-credentials.json
+*.credentials.json
+
+# SQLite runtime DB
+cybershield_audit.db
+cybershield_audit.db-journal
+
+# Logs
+*.log
+

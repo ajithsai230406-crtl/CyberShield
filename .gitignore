@@ -1,15 +1,17 @@
+# Flutter & Dart
+.dart_tool/
+.packages
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+*.iml
+.pub/
+pubspec.lock
+
 # Gradle files
 .gradle/
-build/
 .kotlin/
-
-# Local configuration file (sdk path, etc)
 local.properties
-
-# Log/OS Files
-*.log
-
-# Android Studio generated files and folders
 captures/
 .externalNativeBuild/
 .cxx/
@@ -17,9 +19,9 @@ captures/
 *.apk
 output-metadata.json
 
-# IntelliJ
-*.iml
+# IntelliJ & VS Code
 .idea/
+.vscode/
 misc.xml
 deploymentTargetDropDown.xml
 render.experimental.xml
@@ -28,8 +30,26 @@ render.experimental.xml
 *.jks
 *.keystore
 
-# Google Services (e.g. APIs or Firebase)
-google-services.json
+# Firebase & Cloud Secrets
+*serviceAccountKey*.json
+*firebase-adminsdk*.json
+*service_account*.json
+firebase-credentials.json
+.env
+.env.*
+!.env.example
+*.env
+*.credentials.json
 
-# Android Profiling
-*.hprof
+# Python & Pytest
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+*.egg-info/
+dist/
+
+# Logs
+*.log

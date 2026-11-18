@@ -1,0 +1,26 @@
+# Render Blueprint for CyberShield FastAPI Backend
+# Connect your GitHub repo on https://dashboard.render.com -> New -> Blueprint
+services:
+  - type: web
+    name: cybershield-api
+    runtime: docker
+    rootDir: backend
+    dockerfilePath: ./Dockerfile
+    plan: free
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: OPENROUTER_MODEL
+        value: nvidia/nemotron-3.5-super-vl:free
+      - key: OPENROUTER_BASE_URL
+        value: https://openrouter.ai/api/v1
+      - key: FIREBASE_PROJECT_ID
+        value: cybersheild-30cc7
+      - key: ALLOWED_ORIGINS
+        value: "*"
+      - key: API_RATE_LIMIT_PER_MINUTE
+        value: "120"
+      - key: DISABLE_LAN_BEACON
+        value: "1"
