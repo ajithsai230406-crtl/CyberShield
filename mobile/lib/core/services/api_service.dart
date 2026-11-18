@@ -23,17 +23,19 @@ import 'package:cybershield/core/models/security_event_model.dart';
 
 class ApiService {
   static const String _prefKeyApiBaseUrl = 'cybershield_api_base_url';
+  static const String _prefKeyCloudMigrated = 'cybershield_cloud_migrated_v1';
 
   static String? _customBaseUrl;
   static bool _initialized = false;
 
-  /// Compile-time Cloud HTTPS backend URL injected via:
-  ///   flutter build apk --dart-define=CLOUD_API_URL=https://your-app.up.railway.app
-  /// (also honors --dart-define=API_BASE_URL=https://... for backward compatibility).
+  /// Production Railway Cloud HTTPS backend URL (live & verified).
+  /// Can be overridden at build time via --dart-define=CLOUD_API_URL=https://...
+  /// or --dart-define=API_BASE_URL=https://...
+  static const String defaultCloudUrl = 'https://cybershield-api-production-3d05c0b0.up.railway.app';
   static const String _envCloudApiUrl = String.fromEnvironment('CLOUD_API_URL');
   static const String _envApiBaseUrl = String.fromEnvironment('API_BASE_URL');
 
-  /// Configured Cloud HTTPS endpoint if provided at build time, otherwise empty.
+  /// Active Cloud HTTPS endpoint (compile-time override or verified Railway production default).
   static String get presetCloudUrl {
     if (_envCloudApiUrl.trim().isNotEmpty) {
       return _sanitizeUrl(_envCloudApiUrl);
@@ -41,7 +43,7 @@ class ApiService {
     if (_envApiBaseUrl.trim().isNotEmpty) {
       return _sanitizeUrl(_envApiBaseUrl);
     }
-    return '';
+    return defaultCloudUrl;
   }
 
   /// Quick connection presets for supported device environments
@@ -91,14 +93,25 @@ class ApiService {
   static const Duration timeoutDuration = defaultTimeout;
 
   /// Initialize and load persistently saved API Base URL from SharedPreferences.
-  /// If no saved URL exists and a Cloud HTTPS URL is baked in via --dart-define,
-  /// uses the Cloud HTTPS URL by default so CyberShield works anywhere.
+  /// Defaults to the deployed Railway Cloud HTTPS URL so CyberShield works anywhere
+  /// without PC/USB/same-Wi-Fi. Performs a one-time migration off legacy local LAN IPs
+  /// while preserving any subsequent custom endpoint chosen by the user in Settings.
   static Future<void> init() async {
     if (_initialized) return;
     try {
       final prefs = await SharedPreferences.getInstance();
       final savedUrl = prefs.getString(_prefKeyApiBaseUrl);
-      if (savedUrl != null && savedUrl.trim().isNotEmpty) {
+      final migrated = prefs.getBool(_prefKeyCloudMigrated) ?? false;
+
+      if (!migrated && presetCloudUrl.isNotEmpty) {
+        if (savedUrl == null || savedUrl.trim().isEmpty || isLocalHostUrl(savedUrl)) {
+          _customBaseUrl = presetCloudUrl;
+          await prefs.setString(_prefKeyApiBaseUrl, presetCloudUrl);
+        } else {
+          _customBaseUrl = _sanitizeUrl(savedUrl);
+        }
+        await prefs.setBool(_prefKeyCloudMigrated, true);
+      } else if (savedUrl != null && savedUrl.trim().isNotEmpty) {
         _customBaseUrl = _sanitizeUrl(savedUrl);
       } else if (presetCloudUrl.isNotEmpty) {
         _customBaseUrl = presetCloudUrl;
@@ -622,9 +635,12 @@ class ApiService {
     final futures = candidateList.map((candidate) async {
       final sw = Stopwatch()..start();
       try {
+        final probeTimeout = isCloudUrl(candidate)
+            ? const Duration(milliseconds: 5000)
+            : const Duration(milliseconds: 2200);
         final res = await http
             .get(Uri.parse('$candidate/health'))
-            .timeout(const Duration(milliseconds: 2200));
+            .timeout(probeTimeout);
         sw.stop();
         if (res.statusCode == 200) {
           final decoded = jsonDecode(res.body) as Map<String, dynamic>;
