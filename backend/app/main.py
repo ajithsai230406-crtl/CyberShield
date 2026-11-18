@@ -1707,6 +1707,89 @@ async def analyze_installed_apps_batch_endpoint(
     )
 
 
+def _analyze_phone_heuristics(
+    raw_number: str,
+    norm_phone: str,
+    caller_name: Optional[str] = None,
+) -> Tuple[int, List[str], List[str]]:
+    """
+    Deterministic telecom & spam numbering heuristic analyzer for incoming/manual call checks.
+    Detects Indian TRAI telemarketing/commercial series (140 / 160 / 1600), toll-free outbound
+    spoofing, high-risk international Wangiri/premium-rate prefixes, synthetic VoIP caller IDs,
+    and spam caller-name labels without false-flagging normal local numbers.
+    """
+    digits = re.sub(r"\D", "", raw_number or norm_phone or "")
+    has_intl_plus = (raw_number or "").strip().startswith("+") or (raw_number or "").strip().startswith("00")
+    score = 0
+    tags: List[str] = []
+    reasons: List[str] = []
+
+    # Normalize national Indian form (strip +91 / 91 prefix or leading trunk 0)
+    national = digits
+    if digits.startswith("91") and len(digits) >= 11:
+        national = digits[2:]
+    elif digits.startswith("0") and len(digits) >= 10:
+        national = digits[1:]
+
+    # 1. Indian TRAI 140 series (official promotional telemarketing spam series)
+    if national.startswith("140") and 9 <= len(national) <= 11:
+        score = max(score, 75)
+        tags.append("trai_140_telemarketing_spam")
+        reasons.append(
+            "Matches Indian TRAI 140 telemarketing series (registered promotional/spam commercial calling block)."
+        )
+
+    # 2. Indian TRAI 160 / 1600 series (automated service/banking/NBFC commercial calling series)
+    elif national.startswith("160") and 9 <= len(national) <= 11:
+        base_160_score = 55
+        if national.startswith("16000") or "000" in national[:6]:
+            base_160_score = 65
+        score = max(score, base_160_score)
+        tags.append("trai_1600_commercial_spam")
+        reasons.append(
+            "Matches Indian TRAI 160/1600 commercial & automated calling series — frequently used for unsolicited "
+            "tele-calling, loan/credit offers, and impersonated bank KYC calls."
+        )
+
+    # 3. Toll-free outbound spoofing (1800 / 1860 calling outbound is a classic vishing indicator)
+    elif national.startswith(("1800", "1860")) and len(national) >= 10:
+        score = max(score, 45)
+        tags.append("toll_free_outbound_spoof_risk")
+        reasons.append(
+            "Toll-free prefix (1800/1860) appearing as an outbound caller ID — legitimate support lines "
+            "receive inbound calls; outbound calls requesting OTP/KYC are commonly spoofed."
+        )
+
+    # 4. High-risk international Wangiri / satellite / premium-rate prefixes
+    if has_intl_plus:
+        intl_digits = digits[2:] if (raw_number or "").strip().startswith("00") else digits
+        wangiri_prefixes = ("234", "224", "252", "216", "371", "375", "381", "881", "882", "883", "1900", "900")
+        if intl_digits.startswith(wangiri_prefixes):
+            score = max(score, 70)
+            tags.append("wangiri_international_premium_risk")
+            reasons.append(
+                "Originates from a high-risk international premium-rate or Wangiri one-ring callback scam prefix."
+            )
+
+    # 5. Synthetic / spoofed VoIP caller ID anomalies (5+ repeated digits or invalid length)
+    if len(digits) < 7 or len(digits) > 15 or re.search(r"(\d)\1{4,}", digits):
+        score = max(score, 65)
+        tags.append("spoofed_voip_pattern")
+        reasons.append(
+            "Abnormal or repetitive digit pattern consistent with spoofed VoIP / automated dialer caller IDs."
+        )
+
+    # 6. Caller display name spam indicators
+    if caller_name:
+        low_name = caller_name.lower()
+        if any(k in low_name for k in ("spam", "scam", "fraud", "telemarket", "telecaller", "loan offer", "kyc", "lottery")):
+            score = max(score, 55)
+            tags.append("suspicious_caller_label")
+            reasons.append(f"Caller label '{caller_name}' contains known spam/scam telemarketing indicators.")
+
+    return min(100, score), tags, reasons
+
+
 @app.post(
     "/api/v1/calls/screen",
     response_model=CallScreenResponse,
@@ -1714,14 +1797,15 @@ async def analyze_installed_apps_batch_endpoint(
     summary="Screen incoming phone number against community threat intelligence",
     tags=["Call Screening", "Real-Time Android Protection"],
 )
-async def screen_incoming_call_endpoint(
+def screen_incoming_call_endpoint(
     request: CallScreenRequest,
     current_user: AuthenticatedUser = Depends(get_current_user),
 ):
     """
-    Screen an incoming caller number. Looks up verified community reports,
-    crowd spam scores, and phone risk indicators to advise whether to allow,
-    warn, silence, or block the call.
+    Screen an incoming or manually entered caller number. Combines verified
+    community threat reports with telecom/spam numbering heuristics (TRAI 140/1600,
+    toll-free outbound spoofing, Wangiri international prefixes, spoofed VoIP IDs)
+    to advise whether to allow, warn, or silence the call.
     """
     raw_number = request.phone_number.strip()
     try:
@@ -1732,39 +1816,88 @@ async def screen_incoming_call_endpoint(
         display_phone = norm_phone
 
     rep = community_repo.get_reputation("phone", norm_phone)
-    spam_score = int(rep.get("suspicion_score") or rep.get("crowd_suspicion_score") or 0)
+    community_score = int(rep.get("suspicion_score") or rep.get("crowd_suspicion_score") or 0)
     verified = bool(rep.get("is_verified_threat") or rep.get("verified_threat") or False)
     report_count = int(rep.get("total_reports") or rep.get("report_count") or 0)
     confidence = str(rep.get("confidence") or "Low")
     raw_tags = rep.get("evidence_tags", [])
     evidence_tags = [t["tag"] if isinstance(t, dict) and "tag" in t else str(t) for t in raw_tags]
 
+    # Run deterministic telecom & spam numbering heuristics
+    heuristic_score, heuristic_tags, heuristic_reasons = _analyze_phone_heuristics(
+        raw_number=raw_number,
+        norm_phone=norm_phone,
+        caller_name=request.caller_name,
+    )
+    for t in heuristic_tags:
+        if t not in evidence_tags:
+            evidence_tags.append(t)
+
+    spam_score = min(
+        100,
+        max(community_score, heuristic_score) + (15 if community_score > 0 and heuristic_score > 0 else 0),
+    )
+    if heuristic_score >= 60 and confidence == "Low":
+        confidence = "Medium"
+
     is_known_spam = verified or spam_score >= 25 or report_count >= 1
 
     if verified or spam_score >= 70:
         recommended_action = "silence"
         classification = "Critical" if verified else "High Risk"
+        detail_parts = []
+        if report_count > 0:
+            detail_parts.append(f"Confirmed by {report_count} community threat report(s).")
+        detail_parts.extend(heuristic_reasons)
         explanation = (
-            f"Incoming caller {display_phone} is confirmed as a malicious or predatory fraud number "
-            f"in CyberShield threat intelligence ({report_count} reports). Recommended to silence or decline."
+            f"Caller {display_phone} is flagged as a high-risk spam or fraud number. "
+            + " ".join(detail_parts)
+            + " Recommended to silence or decline."
         )
         alert_repo.create_alert(
-            title=f"Spam Call Blocked: {display_phone}",
+            title=f"Spam Call Flagged: {display_phone}",
             severity="critical" if verified else "high",
             category="SPAM_CALLER",
             target=display_phone,
             risk_score=spam_score,
             explanation=explanation,
-            recommended_actions=["Decline or silence the call.", "Do not provide personal or financial details."],
+            recommended_actions=["Decline or silence the call.", "Do not provide personal, banking, or OTP details."],
             user_id=current_user.uid,
             event_key=f"{current_user.uid}:{norm_phone}:CALL:spam",
+        )
+    elif spam_score >= 50:
+        recommended_action = "warn"
+        classification = "High Risk"
+        detail_parts = []
+        if report_count > 0:
+            detail_parts.append(f"Reported {report_count} time(s) by community members.")
+        detail_parts.extend(heuristic_reasons)
+        explanation = (
+            f"Caller {display_phone} exhibits high-risk telemarketing or spam indicators. "
+            + " ".join(detail_parts)
+            + " Exercise strong caution and never share OTPs, PINs, or KYC details."
+        )
+        alert_repo.create_alert(
+            title=f"High-Risk Spam Caller: {display_phone}",
+            severity="high",
+            category="SPAM_CALLER",
+            target=display_phone,
+            risk_score=spam_score,
+            explanation=explanation,
+            recommended_actions=["Avoid answering or silence the call.", "Never reveal passwords, KYC, or OTP codes."],
+            user_id=current_user.uid,
+            event_key=f"{current_user.uid}:{norm_phone}:CALL:high_risk",
         )
     elif spam_score >= 25 or report_count >= 1:
         recommended_action = "warn"
         classification = "Suspicious"
+        detail_parts = []
+        if report_count > 0:
+            detail_parts.append(f"Reported {report_count} time(s) by community members.")
+        detail_parts.extend(heuristic_reasons)
         explanation = (
-            f"Caller {display_phone} has been reported {report_count} time(s) by community members "
-            f"for unsolicited telemarketing or suspicious behavior."
+            f"Caller {display_phone} shows suspicious spam or commercial calling patterns. "
+            + " ".join(detail_parts)
         )
         alert_repo.create_alert(
             title=f"Suspicious Caller: {display_phone}",
@@ -1780,7 +1913,10 @@ async def screen_incoming_call_endpoint(
     else:
         recommended_action = "allow"
         classification = "Safe"
-        explanation = f"No threat or spam reports on file for {display_phone} in community reputation database."
+        explanation = (
+            f"No spam prefix patterns or community threat reports found for {display_phone}. "
+            "If this caller is unsolicited or suspicious, submit a report in Community Reports to warn others."
+        )
 
     smart_event_engine.safe_record(
         user_id=current_user.uid,

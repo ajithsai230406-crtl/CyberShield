@@ -169,6 +169,33 @@ def test_call_screening_reported_spam_number(client):
     assert data["spam_score"] >= 20
 
 
+def test_call_screening_trai_1600_and_140_spam_heuristics(client):
+    """Indian TRAI 1600/0160 commercial and 140 telemarketing spam series are flagged even with 0 community reports."""
+    resp_1600 = client.post("/api/v1/calls/screen", json={"phone_number": "016000 01998"})
+    assert resp_1600.status_code == 200
+    d1600 = resp_1600.json()
+    assert d1600["is_known_spam"] is True
+    assert d1600["spam_score"] >= 55
+    assert d1600["classification"] in ("Suspicious", "High Risk", "Critical")
+    assert d1600["recommended_action"] in ("warn", "silence")
+    assert "trai_1600_commercial_spam" in d1600["evidence_tags"]
+
+    resp_140 = client.post("/api/v1/calls/screen", json={"phone_number": "+911409876543"})
+    assert resp_140.status_code == 200
+    d140 = resp_140.json()
+    assert d140["is_known_spam"] is True
+    assert d140["spam_score"] >= 70
+    assert d140["recommended_action"] == "silence"
+    assert "trai_140_telemarketing_spam" in d140["evidence_tags"]
+
+    resp_wangiri = client.post("/api/v1/calls/screen", json={"phone_number": "+2348012345678"})
+    assert resp_wangiri.status_code == 200
+    dw = resp_wangiri.json()
+    assert dw["is_known_spam"] is True
+    assert dw["spam_score"] >= 70
+    assert "wangiri_international_premium_risk" in dw["evidence_tags"]
+
+
 # ===========================================================================
 # 3. Notification Threat Analysis & Sensitive Redaction Tests
 # ===========================================================================
