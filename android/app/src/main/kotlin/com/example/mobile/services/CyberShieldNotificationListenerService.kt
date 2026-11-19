@@ -88,7 +88,14 @@ class CyberShieldNotificationListenerService : NotificationListenerService() {
         private val PHISHING_KEYWORDS = listOf(
             "account suspended", "verify login", "urgent action", "wire transfer",
             "claim reward", "tax refund", "card blocked", "unauthorized transaction",
-            "immediate verification", "account compromised"
+            "immediate verification", "account compromised",
+            "kyc update", "kyc expired", "pan card", "aadhar", "aadhaar",
+            "bank account blocked", "credit card blocked", "debit card blocked",
+            "loan approved", "loan offer", "insurance claim",
+            "won lottery", "congratulations you won", "prize winner",
+            "click here to verify", "update your payment", "confirm your identity",
+            "suspicious activity", "security alert", "password expired",
+            "limited time offer", "act now", "expire today", "last chance"
         )
 
         fun redactSensitiveText(input: String): Pair<String, Boolean> {
@@ -156,7 +163,14 @@ class CyberShieldNotificationListenerService : NotificationListenerService() {
         if (::prefs.isInitialized) {
             prefs.edit().putBoolean(KEY_LISTENER_CONNECTED, false).apply()
         }
-        Log.w(TAG, "CyberShield NotificationListenerService disconnected")
+        Log.w(TAG, "CyberShield NotificationListenerService disconnected — requesting rebind")
+        // On MIUI/Redmi devices the OS aggressively kills notification listeners.
+        // requestRebind() asks the system to reconnect this service automatically.
+        try {
+            requestRebind(android.content.ComponentName(this, this::class.java))
+        } catch (e: Exception) {
+            Log.w(TAG, "requestRebind failed (expected on API < 24): ${e.message}")
+        }
     }
 
     override fun onDestroy() {
@@ -191,8 +205,30 @@ class CyberShieldNotificationListenerService : NotificationListenerService() {
 
         val extras = sbn.notification.extras ?: return
         val rawTitle = extras.getCharSequence("android.title")?.toString()?.trim() ?: ""
-        val rawText = extras.getCharSequence("android.bigText")?.toString()?.trim()
-            ?: extras.getCharSequence("android.text")?.toString()?.trim() ?: ""
+
+        // Google Messages and modern messaging apps use MessagingStyle —
+        // the actual message text lives in the MessagingStyle messages bundle,
+        // NOT in android.text / android.bigText which may only contain a
+        // summary like "3 new messages". Extract the latest message body from
+        // MessagingStyle first, then fall back to bigText / text.
+        var rawText: String = ""
+        try {
+            val messagingStyle = androidx.core.app.NotificationCompat.MessagingStyle
+                .extractMessagingStyleFromNotification(sbn.notification)
+            if (messagingStyle != null) {
+                val messages = messagingStyle.messages
+                if (messages.isNotEmpty()) {
+                    val latest = messages.last()
+                    rawText = latest.text?.toString()?.trim() ?: ""
+                }
+            }
+        } catch (_: Exception) {
+            // MessagingStyle not available
+        }
+        if (rawText.isEmpty()) {
+            rawText = extras.getCharSequence("android.bigText")?.toString()?.trim()
+                ?: extras.getCharSequence("android.text")?.toString()?.trim() ?: ""
+        }
         val subText = extras.getCharSequence("android.subText")?.toString()?.trim() ?: ""
 
         if (rawTitle.isEmpty() && rawText.isEmpty()) return
@@ -224,13 +260,20 @@ class CyberShieldNotificationListenerService : NotificationListenerService() {
             }
         }
 
-        // 7. Quick local threat heuristic (only alerts on high-confidence phishing, never on normal messages)
+        // 7. Quick local threat heuristic (alerts on high-confidence phishing, spam, scam patterns)
         val lowerText = combinedRaw.lowercase()
         val hasPhishingKeywords = PHISHING_KEYWORDS.any { lowerText.contains(it) }
         val hasSuspiciousUrl = urls.any { u ->
-            u.contains("192.168.") || u.contains("10.") || u.contains(".ru") ||
-                u.contains(".xyz") || u.contains(".top") || u.contains("bit.ly")
+            val lu = u.lowercase()
+            lu.contains("192.168.") || lu.contains("10.") || lu.contains(".ru") ||
+                lu.contains(".xyz") || lu.contains(".top") || lu.contains("bit.ly") ||
+                lu.contains("tinyurl.") || lu.contains(".tk") || lu.contains(".ml") ||
+                lu.contains(".ga") || lu.contains(".cf") || lu.contains(".gq") ||
+                lu.contains("shorturl.") || lu.contains("cutt.ly") || lu.contains("rb.gy") ||
+                lu.contains("is.gd") || lu.contains("t.co/")
         }
+        // Count how many phishing keywords match — multiple matches is very high confidence
+        val phishingKeywordCount = PHISHING_KEYWORDS.count { lowerText.contains(it) }
 
         val storePreview = prefs.getBoolean(KEY_STORE_PREVIEW, true)
         val eventMap = hashMapOf<String, Any?>(
@@ -258,7 +301,11 @@ class CyberShieldNotificationListenerService : NotificationListenerService() {
         val targetScreen = if (commType == "email") "email_scanner" else "sms_scanner"
 
         // 8. Analyze asynchronously with FastAPI backend when configured; fail-safe to local heuristic offline
-        val localHighConfidenceThreat = hasSuspiciousUrl || (hasPhishingKeywords && urls.isNotEmpty())
+        // High-confidence local threat: suspicious URL present, OR phishing keywords + URL combo,
+        // OR 2+ phishing keywords matching even without a URL (e.g. KYC scam SMS)
+        val localHighConfidenceThreat = hasSuspiciousUrl ||
+            (hasPhishingKeywords && urls.isNotEmpty()) ||
+            phishingKeywordCount >= 2
         val apiBaseUrl = prefs.getString(KEY_API_BASE_URL, null)?.trim()?.trimEnd('/')
         if (!apiBaseUrl.isNullOrEmpty()) {
             val authToken = prefs.getString(KEY_AUTH_TOKEN, null)?.trim()

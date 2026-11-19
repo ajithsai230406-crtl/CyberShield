@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
-from app.auth import get_current_user, AuthenticatedUser, initialize_firebase_admin
+from app.auth import get_current_user, get_current_user_optional, AuthenticatedUser, initialize_firebase_admin
 from app.services.url_detector import URLThreatDetector, URLAnalysisResult
 from app.services.sms_detector import SMSThreatDetector, SMSAnalysisResult
 from app.services.qr_detector import QRThreatDetector, QRAnalysisResult
@@ -1564,7 +1564,7 @@ async def scan_permissions_alias(
 )
 async def analyze_installed_apps_batch_endpoint(
     request: BatchPermissionAnalysisRequest,
-    current_user: AuthenticatedUser = Depends(get_current_user),
+    current_user: AuthenticatedUser = Depends(get_current_user_optional),
 ):
     """
     Evaluates permission inventory for multiple installed Android packages.
@@ -1799,7 +1799,7 @@ def _analyze_phone_heuristics(
 )
 def screen_incoming_call_endpoint(
     request: CallScreenRequest,
-    current_user: AuthenticatedUser = Depends(get_current_user),
+    current_user: AuthenticatedUser = Depends(get_current_user_optional),
 ):
     """
     Screen an incoming or manually entered caller number. Combines verified
@@ -2009,7 +2009,7 @@ def sanitize_and_redact_notification_text(raw_text: str) -> Tuple[str, bool]:
 )
 async def analyze_notification_endpoint(
     request: NotificationAnalyzeRequest,
-    current_user: AuthenticatedUser = Depends(get_current_user),
+    current_user: AuthenticatedUser = Depends(get_current_user_optional),
 ):
     """
     Analyzes an incoming Android notification. Extracts embedded URLs,

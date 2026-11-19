@@ -163,7 +163,7 @@ class CyberShieldCallScreeningService : CallScreeningService() {
         val authToken = prefs.getString(KEY_AUTH_TOKEN, null)?.trim()
 
         // Try live CyberShield backend call-screening API with strict short timeout
-        if (!apiBaseUrl.isNullOrEmpty() && !authToken.isNullOrEmpty()) {
+        if (!apiBaseUrl.isNullOrEmpty()) {
             val remote = queryBackendScreeningApi(apiBaseUrl, authToken, phoneNumber)
             if (remote != null) {
                 if (remote.isKnownSpam && remote.spamScore >= 70) {
@@ -176,7 +176,10 @@ class CyberShieldCallScreeningService : CallScreeningService() {
             }
         }
 
-        // Safe offline fallback: ONLY flag if explicitly cached as verified spam previously
+        // On-device heuristic check for Indian TRAI series, Wangiri, toll-free spoofing
+        val (heuristicScore, heuristicReason) = CyberShieldCallStateReceiver.evaluatePhoneHeuristic(phoneNumber)
+
+        // Safe offline fallback: local cached spam or telecom heuristics
         return if (isLocalKnownSpam) {
             ScreeningDecision(
                 isKnownSpam = true,
@@ -186,6 +189,19 @@ class CyberShieldCallScreeningService : CallScreeningService() {
                 recommendedAction = "silence",
                 explanation = "Matched locally cached verified spam number while offline.",
                 evidenceTags = listOf("local_spam_cache"),
+                backendEvaluated = false
+            )
+        } else if (heuristicScore > 0) {
+            val classification = if (heuristicScore >= 70) "High Risk" else "Suspicious"
+            val action = if (heuristicScore >= 70) "silence" else "warn"
+            ScreeningDecision(
+                isKnownSpam = true,
+                spamScore = heuristicScore,
+                classification = classification,
+                confidence = "Medium",
+                recommendedAction = action,
+                explanation = heuristicReason ?: "Matches spam or commercial telemarketing series (offline heuristic).",
+                evidenceTags = listOf("offline_telecom_heuristic"),
                 backendEvaluated = false
             )
         } else {
@@ -204,7 +220,7 @@ class CyberShieldCallScreeningService : CallScreeningService() {
 
     private fun queryBackendScreeningApi(
         apiBaseUrl: String,
-        authToken: String,
+        authToken: String?,
         phoneNumber: String
     ): ScreeningDecision? {
         var conn: HttpURLConnection? = null
@@ -216,7 +232,9 @@ class CyberShieldCallScreeningService : CallScreeningService() {
                 readTimeout = READ_TIMEOUT_MS
                 doOutput = true
                 setRequestProperty("Content-Type", "application/json")
-                setRequestProperty("Authorization", "Bearer $authToken")
+                if (!authToken.isNullOrEmpty()) {
+                    setRequestProperty("Authorization", "Bearer $authToken")
+                }
             }
 
             val payload = JSONObject().apply {

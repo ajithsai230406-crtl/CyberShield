@@ -94,27 +94,35 @@ class ApiService {
 
   /// Initialize and load persistently saved API Base URL from SharedPreferences.
   /// Defaults to the deployed Railway Cloud HTTPS URL so CyberShield works anywhere
-  /// without PC/USB/same-Wi-Fi. Performs a one-time migration off legacy local LAN IPs
-  /// while preserving any subsequent custom endpoint chosen by the user in Settings.
+  /// without PC/USB/same-Wi-Fi. Automatically overrides any stale localhost or LAN IP
+  /// with the production cloud URL on every startup — a physical Android device can
+  /// never reach a developer PC's localhost, so keeping such URLs is always wrong.
   static Future<void> init() async {
     if (_initialized) return;
     try {
       final prefs = await SharedPreferences.getInstance();
       final savedUrl = prefs.getString(_prefKeyApiBaseUrl);
-      final migrated = prefs.getBool(_prefKeyCloudMigrated) ?? false;
 
-      if (!migrated && presetCloudUrl.isNotEmpty) {
-        if (savedUrl == null || savedUrl.trim().isEmpty || isLocalHostUrl(savedUrl)) {
+      if (presetCloudUrl.isNotEmpty) {
+        // ALWAYS override localhost / LAN / emulator URLs with the production
+        // cloud endpoint. These URLs are only valid during local development
+        // from an emulator or same-WiFi device; on a real phone they cause
+        // permanent "OFFLINE" state.
+        if (savedUrl == null ||
+            savedUrl.trim().isEmpty ||
+            isLocalHostUrl(savedUrl)) {
           _customBaseUrl = presetCloudUrl;
           await prefs.setString(_prefKeyApiBaseUrl, presetCloudUrl);
         } else {
           _customBaseUrl = _sanitizeUrl(savedUrl);
         }
-        await prefs.setBool(_prefKeyCloudMigrated, true);
+        // Mark migrated so future logic knows migration ran at least once
+        final migrated = prefs.getBool(_prefKeyCloudMigrated) ?? false;
+        if (!migrated) {
+          await prefs.setBool(_prefKeyCloudMigrated, true);
+        }
       } else if (savedUrl != null && savedUrl.trim().isNotEmpty) {
         _customBaseUrl = _sanitizeUrl(savedUrl);
-      } else if (presetCloudUrl.isNotEmpty) {
-        _customBaseUrl = presetCloudUrl;
       } else {
         try {
           if (Platform.isAndroid) {
@@ -1899,7 +1907,9 @@ class ApiService {
     }
   }
 
-  /// Screen incoming phone number against community spam reputation
+  /// Screen incoming phone number against community spam reputation.
+  /// Falls back to on-device telecom heuristics (TRAI 140/1600, Wangiri, toll-free spoofing)
+  /// if the backend is unreachable or offline.
   static Future<CallScreenResult?> screenIncomingCall(
     String phoneNumber, {
     String? callerName,
@@ -1924,10 +1934,61 @@ class ApiService {
           return CallScreenResult.fromJson(decoded);
         }
       }
-      return null;
     } catch (_) {
-      return null;
+      // Fall through to deterministic on-device heuristic evaluation
     }
+    return _evaluateLocalPhoneHeuristic(phoneNumber, callerName: callerName);
+  }
+
+  /// On-device deterministic telecom spam heuristic analyzer
+  static CallScreenResult _evaluateLocalPhoneHeuristic(String rawNumber, {String? callerName}) {
+    final digits = rawNumber.replaceAll(RegExp(r'\D'), '');
+    var national = digits;
+    if (digits.startsWith('91') && digits.length >= 11) {
+      national = digits.substring(2);
+    } else if (digits.startsWith('0') && digits.length >= 10) {
+      national = digits.substring(1);
+    }
+
+    int spamScore = 0;
+    final tags = <String>[];
+    String explanation = 'No threat patterns detected in phone number (offline check).';
+
+    if (national.startsWith('140') && national.length >= 9 && national.length <= 11) {
+      spamScore = 75;
+      tags.add('trai_140_telemarketing_spam');
+      explanation = 'Matches Indian TRAI 140 telemarketing series (registered promotional/spam commercial calling block).';
+    } else if (national.startsWith('160') && national.length >= 9 && national.length <= 11) {
+      spamScore = (national.startsWith('16000') || national.contains('000')) ? 65 : 55;
+      tags.add('trai_1600_commercial_spam');
+      explanation = 'Matches Indian TRAI 160/1600 commercial & automated calling series — frequently used for unsolicited tele-calling, loan/credit offers, and impersonated bank KYC calls.';
+    } else if ((national.startsWith('1800') || national.startsWith('1860')) && national.length >= 10) {
+      spamScore = 45;
+      tags.add('toll_free_outbound_spoof_risk');
+      explanation = 'Toll-free prefix (1800/1860) appearing as an outbound caller ID — legitimate support lines receive inbound calls; outbound calls requesting OTP/KYC are commonly spoofed.';
+    } else if (digits.length < 7 || digits.length > 15 || RegExp(r'(\d)\1{4,}').hasMatch(digits)) {
+      spamScore = 65;
+      tags.add('spoofed_voip_pattern');
+      explanation = 'Abnormal or repetitive digit pattern consistent with spoofed VoIP / automated dialer caller IDs.';
+    }
+
+    final classification = spamScore >= 70 ? 'High Risk' : (spamScore >= 40 ? 'Suspicious' : 'Safe');
+    final action = spamScore >= 70 ? 'silence' : (spamScore >= 40 ? 'warn' : 'allow');
+
+    return CallScreenResult(
+      phoneNumber: rawNumber,
+      normalizedNumber: digits,
+      callerName: callerName,
+      isKnownSpam: spamScore >= 40,
+      spamScore: spamScore,
+      classification: classification,
+      confidence: 'Medium',
+      reportCount: 0,
+      evidenceTags: tags.isEmpty ? ['offline_heuristic'] : tags,
+      recommendedAction: action,
+      explanation: explanation,
+      timestamp: DateTime.now().toIso8601String(),
+    );
   }
 
   /// Analyze incoming notification content for phishing links and scam language
@@ -1957,10 +2018,92 @@ class ApiService {
           return NotificationScanResult.fromJson(decoded);
         }
       }
-      return null;
     } catch (_) {
-      return null;
+      // Fall through to deterministic on-device notification heuristic evaluation
     }
+    return _evaluateLocalNotificationHeuristic(
+      packageName: packageName,
+      title: title,
+      text: text,
+      subText: subText,
+    );
+  }
+
+  /// On-device deterministic notification threat heuristic analyzer
+  static NotificationScanResult _evaluateLocalNotificationHeuristic({
+    required String packageName,
+    String? title,
+    String? text,
+    String? subText,
+  }) {
+    final combined = '${title ?? ""} ${text ?? ""} ${subText ?? ""}'.toLowerCase();
+    final urls = <String>[];
+    final urlRegex = RegExp(r'(https?://[^\s<>"]+|www\.[^\s<>"]+)');
+    for (final match in urlRegex.allMatches(combined)) {
+      final u = match.group(0);
+      if (u != null && !urls.contains(u)) urls.add(u);
+    }
+
+    final hasPhishingUrl = urls.any((u) {
+      final lu = u.toLowerCase();
+      return lu.contains('.ru') || lu.contains('.xyz') || lu.contains('.top') ||
+          lu.contains('bit.ly') || lu.contains('tinyurl.') || lu.contains('.tk') ||
+          lu.contains('.ml') || lu.contains('.ga') || lu.contains('.cf') || lu.contains('.gq') ||
+          lu.contains('192.168.') || lu.contains('10.');
+    });
+
+    final phishingKeywords = [
+      'account suspended', 'verify login', 'urgent action', 'wire transfer',
+      'claim reward', 'tax refund', 'card blocked', 'unauthorized transaction',
+      'immediate verification', 'account compromised', 'kyc update', 'kyc expired',
+      'pan card', 'aadhar', 'aadhaar', 'bank account blocked', 'credit card blocked',
+      'won lottery', 'congratulations you won', 'click here to verify', 'update your payment',
+    ];
+
+    final matchedKeywords = phishingKeywords.where((k) => combined.contains(k)).toList();
+    final hasFinancialUrgency = matchedKeywords.isNotEmpty;
+
+    int riskScore = 0;
+    final threatTypes = <String>[];
+    if (hasPhishingUrl) {
+      riskScore += 50;
+      threatTypes.add('phishing_url');
+    }
+    if (matchedKeywords.length >= 2) {
+      riskScore += 40;
+      threatTypes.add('financial_urgency_scam');
+    } else if (matchedKeywords.isNotEmpty) {
+      riskScore += 25;
+      threatTypes.add('suspicious_phishing_language');
+    }
+    if (hasPhishingUrl && matchedKeywords.isNotEmpty) {
+      riskScore = 85;
+      threatTypes.add('credential_harvesting');
+    }
+    riskScore = riskScore.clamp(0, 100);
+
+    final classification = riskScore >= 70 ? 'Critical' : (riskScore >= 45 ? 'High Risk' : (riskScore >= 20 ? 'Suspicious' : 'Safe'));
+    final explanation = threatTypes.isNotEmpty
+        ? 'Detected threat patterns: ${threatTypes.join(", ")} in notification (offline check).'
+        : 'No suspicious indicators found in notification.';
+    final action = riskScore >= 45 ? 'Do not click links or share credentials.' : 'Verify sender identity.';
+
+    return NotificationScanResult(
+      packageName: packageName,
+      sanitizedText: text ?? '',
+      detectedUrls: urls,
+      smsRiskScore: riskScore,
+      overallRiskScore: riskScore,
+      classification: classification,
+      threatTypes: threatTypes,
+      hasPhishingUrl: hasPhishingUrl,
+      hasFinancialUrgency: hasFinancialUrgency,
+      hasImpersonation: threatTypes.contains('credential_harvesting'),
+      redactedSensitiveData: false,
+      explanation: explanation,
+      recommendedAction: action,
+      timestamp: DateTime.now().toIso8601String(),
+    );
   }
 
   /// Ingest & analyze an eligible communication (SMS, notification, call, email, WhatsApp)

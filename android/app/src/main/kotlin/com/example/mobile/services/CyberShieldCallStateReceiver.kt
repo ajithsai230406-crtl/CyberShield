@@ -91,7 +91,7 @@ class CyberShieldCallStateReceiver : BroadcastReceiver() {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         if (!prefs.getBoolean(KEY_PROTECTION_ENABLED, true)) return
         if (prefs.getBoolean(KEY_COMM_PAUSED, false)) return
-        if (!prefs.getBoolean(KEY_MONITOR_CALLS, false)) return
+        if (!prefs.getBoolean(KEY_MONITOR_CALLS, true)) return
 
         @Suppress("DEPRECATION")
         val incomingNumber = intent.getStringExtra(TelephonyManager.EXTRA_INCOMING_NUMBER)?.trim()
@@ -159,7 +159,7 @@ class CyberShieldCallStateReceiver : BroadcastReceiver() {
         // Try live backend check if configured
         val apiBaseUrl = prefs.getString(KEY_API_BASE_URL, null)?.trim()?.trimEnd('/')
         val authToken = prefs.getString(KEY_AUTH_TOKEN, null)?.trim()
-        if (!apiBaseUrl.isNullOrEmpty() && !authToken.isNullOrEmpty()) {
+        if (!apiBaseUrl.isNullOrEmpty()) {
             var conn: HttpURLConnection? = null
             try {
                 val url = URL("$apiBaseUrl/api/v1/calls/screen")
@@ -169,7 +169,9 @@ class CyberShieldCallStateReceiver : BroadcastReceiver() {
                     readTimeout = BACKEND_TIMEOUT_MS
                     doOutput = true
                     setRequestProperty("Content-Type", "application/json")
-                    setRequestProperty("Authorization", "Bearer $authToken")
+                    if (!authToken.isNullOrEmpty()) {
+                        setRequestProperty("Authorization", "Bearer $authToken")
+                    }
                 }
                 val payload = JSONObject().apply {
                     put("phone_number", incomingNumber)

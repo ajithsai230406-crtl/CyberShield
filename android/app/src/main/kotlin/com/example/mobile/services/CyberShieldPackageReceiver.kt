@@ -73,7 +73,7 @@ class CyberShieldPackageReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context?, intent: Intent?) {
         if (context == null || intent == null) return
-        if (intent.action != Intent.ACTION_PACKAGE_ADDED) return
+        if (intent.action != Intent.ACTION_PACKAGE_ADDED && intent.action != Intent.ACTION_PACKAGE_REPLACED) return
 
         val uri = intent.data ?: return
         val packageName = uri.schemeSpecificPart ?: return
@@ -244,7 +244,7 @@ class CyberShieldPackageReceiver : BroadcastReceiver() {
         // Also query cloud backend if online for threat intelligence sync
         val apiBaseUrl = prefs.getString(KEY_API_BASE_URL, null)?.trim()?.trimEnd('/')
         val authToken = prefs.getString(KEY_AUTH_TOKEN, null)?.trim()
-        if (!apiBaseUrl.isNullOrEmpty() && !authToken.isNullOrEmpty()) {
+        if (!apiBaseUrl.isNullOrEmpty()) {
             syncApkWithBackend(apiBaseUrl, authToken, eventMap)
         }
     }
@@ -320,7 +320,7 @@ class CyberShieldPackageReceiver : BroadcastReceiver() {
         }
     }
 
-    private fun syncApkWithBackend(apiBaseUrl: String, authToken: String, eventMap: Map<String, Any?>) {
+    private fun syncApkWithBackend(apiBaseUrl: String, authToken: String?, eventMap: Map<String, Any?>) {
         var conn: HttpURLConnection? = null
         try {
             val endpoint = URL("$apiBaseUrl/api/v1/permissions/analyze-batch")
@@ -330,7 +330,9 @@ class CyberShieldPackageReceiver : BroadcastReceiver() {
                 readTimeout = BACKEND_TIMEOUT_MS
                 doOutput = true
                 setRequestProperty("Content-Type", "application/json; charset=utf-8")
-                setRequestProperty("Authorization", "Bearer $authToken")
+                if (!authToken.isNullOrEmpty()) {
+                    setRequestProperty("Authorization", "Bearer $authToken")
+                }
             }
 
             val appObj = JSONObject().apply {
